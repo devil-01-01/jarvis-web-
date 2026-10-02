@@ -2,38 +2,88 @@ import streamlit as st
 from groq import Groq
 import urllib.parse
 
-st.set_page_config(page_title="JARVIS ULTIMATE", page_icon="🤖")
-st.title("🤖 JARVIS ULTIMATE")
+st.set_page_config(page_title="JARVIS ULTIMATE", page_icon="🤖", layout="wide")
+st.title("🤖 JARVIS ULTIMATE - All in One")
 
-GROQ_KEY = st.secrets.get("GROQ_KEY", None) if hasattr(st, "secrets") else None
+GROQ_KEY = st.secrets.get("GROQ_KEY", None)
 if not GROQ_KEY:
-        GROQ_KEY = st.sidebar.text_input("Groq API Key", type="password")
+    GROQ_KEY = st.sidebar.text_input("Groq API Key dalo", type="password")
 
-        client = Groq(api_key=GROQ_KEY) if GROQ_KEY else None
+if not GROQ_KEY:
+    st.warning("Pahle Groq Key dalo - groq.com se free milta hai")
+    st.stop()
 
-        if "history" not in st.session_state:
-                st.session_state.history = []
+client = Groq(api_key=GROQ_KEY)
+MODEL = "openai/gpt-oss-20b"
 
-                for m in st.session_state.history:
-                        with st.chat_message(m["role"]):
-                                    st.markdown(m["content"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Chat", "Maths Solver", "Image", "Video", "Music"])
 
-                                    prompt = st.chat_input("Pucho kuch...")
-                                    if prompt:
-                                            st.session_state.history.append({"role": "user", "content": prompt})
-                                                with st.chat_message("user"):
-                                                            st.markdown(prompt)
-                                                                if client:
-                                                                            with st.chat_message("assistant"):
-                                                                                            r = client.chat.completions.create(model="openai/gpt-oss-20b", messages=st.session_state.history)
-                                                                                                        ans = r.choices[0].message.content
-                                                                                                                    st.markdown(ans)
-                                                                                                                                st.session_state.history.append({"role": "assistant", "content": ans})
+with tab1:
+    st.subheader("Chat with JARVIS")
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
+    for m in st.session_state.chat:
+        with st.chat_message(m["role"]):
+            st.write(m["content"])
+    prompt = st.chat_input("Kuch bhi pucho...")
+    if prompt:
+        st.session_state.chat.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.write(prompt)
+        res = client.chat.completions.create(model=MODEL, messages=st.session_state.chat)
+        ans = res.choices[0].message.content
+        with st.chat_message("assistant"):
+            st.write(ans)
+        st.session_state.chat.append({"role": "assistant", "content": ans})
 
-                                                                                                                                st.divider()
-                                                                                                                                st.subheader("🎨 Image Generator")
-                                                                                                                                p = st.text_input("Image prompt")
-                                                                                                                                if st.button("Generate Image"):
-                                                                                                                                        if p:
-                                                                                                                                                    url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(p)}"
-                                                                                                                                                            st.image(url)
+with tab2:
+    st.subheader("All Maths Problem Solving")
+    math_q = st.text_area("Maths question likho:", height=100, key="math_input")
+    if st.button("Solve Maths", key="math"):
+        if math_q:
+            with st.spinner("Solving..."):
+                sys = "You are a world-class maths expert. Solve step by step with formula and final answer in Hindi + English."
+                r = client.chat.completions.create(model=MODEL, messages=[{"role": "system", "content": sys}, {"role": "user", "content": math_q}])
+                st.markdown(r.choices[0].message.content)
+
+with tab3:
+    st.subheader("Any Type Image Creating")
+    img_p = st.text_input("Image prompt likho:", key="img_p")
+    if st.button("Generate Image", key="img"):
+        if img_p:
+            url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(img_p)}?width=1024&height=1024&nologo=true"
+            st.image(url, caption="Generated by JARVIS")
+            st.link_button("Download Image", url)
+
+with tab4:
+    st.subheader("Any Type Video Creating")
+    vid_p = st.text_area("Video prompt likho:", key="vid_p")
+    if st.button("Generate Video", key="vid"):
+        if vid_p:
+            with st.spinner("Video bana raha hu..."):
+                video_url = f"https://image.pollinations.ai/prompt/{urllib.parse.quote(vid_p)}?model=video"
+                st.video(video_url)
+                st.link_button("Open / Download Video", video_url)
+
+with tab5:
+    st.subheader("Music Creating from Script")
+    mood = st.selectbox("Mood", ["Romantic Bhojpuri", "Sad Hindi", "Rap Hip-Hop", "Devotional", "Lofi"])
+    topic = st.text_input("Gaane ka topic?", key="music_topic")
+    if st.button("1. Lyrics / Script Banao", key="lyrics"):
+        if topic:
+            pr = f"Write a full song lyrics on topic {topic}, mood {mood}. Give Title, Verse, Chorus, Bridge."
+            r = client.chat.completions.create(model=MODEL, messages=[{"role": "user", "content": pr}])
+            st.session_state.lyrics = r.choices[0].message.content
+            st.markdown(st.session_state.lyrics)
+    if "lyrics" in st.session_state:
+        st.divider()
+        st.markdown(st.session_state.lyrics)
+        if st.button("2. Is Lyrics se Music Banao", key="music"):
+            with st.spinner("Music generating..."):
+                audio_text = st.session_state.lyrics[:400]
+                audio_url = f"https://text.pollinations.ai/{urllib.parse.quote(audio_text)}?model=openai-audio&voice=alloy"
+                st.audio(audio_url)
+                st.link_button("Download Music", audio_url)
+                st.success("Ho gaya Boss!")
+
+st.sidebar.success("JARVIS Ready Hai Boss!")                                                                                                                                st.image(url)
