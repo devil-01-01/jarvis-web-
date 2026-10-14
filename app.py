@@ -1,83 +1,125 @@
-import streamlit as st
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch.nn as nn
+import math
 
-# Page setup
-st.set_page_config(page_title="Mini ChatGPT - Torch Transformer", page_icon="🤖")
-st.title("🤖 Mini ChatGPT - Torch + Transformer")
-st.write("Ye real Transformer model hai, jo Torch se bana hai. Pydroid wale se 100x bada hai.")
+# ============ 1. DATA - Tiny Dataset ============
+sentences = [
+    "capital of india is new delhi",
+    "capital of france is paris",
+    "capital of japan is tokyo",
+    "largest planet is jupiter",
+    "smallest planet is mercury",
+    "water formula is h2o",
+]
 
-# Model load - ek baar hi hoga
-@st.cache_resource
-def load_model():
-    model_name = "microsoft/DialoGPT-small" # 117M parameters, Transformer model
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name)
-    return tokenizer, model
+# ============ 2. TOKENIZER ============
+# Build vocabulary from our sentences
+words = sorted(set(" ".join(sentences).split()))
+word_to_id = {w: i+1 for i, w in enumerate(words)} # 0 = padding
+id_to_word = {i: w for w, i in word_to_id.items()}
+vocab_size = len(word_to_id) + 1
+print(f"Vocab: {word_to_id}")
 
-with st.spinner("Transformer model load ho raha hai... pehli baar 500MB download hoga"):
-    tokenizer, model = load_model()
+# Convert sentences to numbers
+data = []
+for s in sentences:
+    ids = [word_to_id[w] for w in s.split()]
+    data.append(ids)
 
-st.success("Model ready hai!")
+# ============ 3. TRANSFORMER MODEL ============
+class TinyTransformer(nn.Module):
+    def __init__(self, vocab_size, d_model=64, nhead=4, num_layers=2):
+        super().__init__()
+        self.d_model = d_model
+        # Embedding: Token -> Vector of 64 numbers
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        # Positional Encoding: To know word order
+        self.pos_embedding = nn.Embedding(20, d_model)
+        # Transformer Encoder - This has ATTENTION inside
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=128,
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        # Final layer: Vector -> Vocab (to predict next word)
+        self.fc_out = nn.Linear(d_model, vocab_size)
 
-# Chat history
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "chat_history_ids" not in st.session_state:
-    st.session_state.chat_history_ids = None
+    def forward(self, x):
+        # x shape: [batch, seq_len]
+        positions = torch.arange(0, x.size(1)).unsqueeze(0).to(x.device)
+        # Add meaning + position
+        x = self.embedding(x) + self.pos_embedding(positions)
+        # Pass through Transformer (Attention happens here)
+        x = self.transformer(x)
+        # Predict next word for each position
+        out = self.fc_out(x)
+        return out
 
-# Purani chat dikhao
-for msg in st.session_state.history:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+# ============ 4. TRAINING ============
+device = "cpu"
+model = TinyTransformer(vocab_size).to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
+loss_fn = nn.CrossEntropyLoss()
 
-# Naya message
-user_input = st.chat_input("Kuch bhi pucho...")
+print("\nTraining started... It is learning to predict next word")
 
-if user_input:
-    # User ka message dikhao
-    with st.chat_message("user"):
-        st.write(user_input)
-    st.session_state.history.append({"role": "user", "content": user_input})
+for epoch in range(500):
+    total_loss = 0
+    for seq in data:
+        # Input: all words except last, Target: all words except first
+        # Example: input [capital, of, india, is, new] -> target [of, india, is, new, delhi]
+        inp = torch.tensor([seq[:-1]]).to(device)
+        target = torch.tensor([seq[1:]]).to(device)
 
-    # Transformer se jawab generate karo
-    with st.chat_message("assistant"):
-        with st.spinner("Soch raha hu..."):
-            new_input_ids = tokenizer.encode(user_input + tokenizer.eos_token, return_tensors="pt")
+        optimizer.zero_grad()
+        output = model(inp) # [1, seq_len-1, vocab_size]
+        loss = loss_fn(output.view(-1, vocab_size), target.view(-1))
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
 
-            if st.session_state.chat_history_ids is not None:
-                bot_input_ids = torch.cat([st.session_state.chat_history_ids, new_input_ids], dim=-1)
-            else:
-                bot_input_ids = new_input_ids
+    if epoch % 100 == 0:
+        print(f"Epoch {epoch}, Loss: {total_loss:.4f}")
 
-            # Transformer generation
-            st.session_state.chat_history_ids = model.generate(
-                bot_input_ids,
-                max_length=1000,
-                pad_token_id=tokenizer.eos_token_id,
-                do_sample=True,
-                top_k=50,
-                top_p=0.95,
-                temperature=0.8
-            )
+print("Training Done! Loss should be near 0.")
 
-            response = tokenizer.decode(
-                st.session_state.chat_history_ids[:, bot_input_ids.shape[-1]:][0],
-                skip_special_tokens=True
-            )
-            st.write(response)
+# ============ 5. GENERATION - Like Real Model ============
+def generate(prompt, max_len=10):
+    model.eval()
+    words_in = prompt.split()
+    ids = [word_to_id[w] for w in words_in if w in word_to_id]
 
-    st.session_state.history.append({"role": "assistant", "content": response})
+    with torch.no_grad():
+        for _ in range(max_len):
+            inp = torch.tensor([ids]).to(device)
+            out = model(inp) # Get predictions
+            # Take last word prediction
+            next_token_logits = out[0, -1, :]
+            next_id = torch.argmax(next_token_logits).item()
 
-# Sidebar - Info
-with st.sidebar:
-    st.header("Model Info")
-    st.write("**Model:** DialoGPT-small")
-    st.write("**Type:** Transformer")
-    st.write("**Library:** Torch (PyTorch)")
-    st.write("**Parameters:** 117 Million")
-    st.write("**Framework:** Streamlit")
-    if st.button("Chat Clear Karo"):
-        st.session_state.history = []
-        st.session_state.chat_history_ids = None
-        st.rerun()
+            # Stop if we predicted something weird (or loop)
+            next_word = id_to_word.get(next_id, "?")
+            ids.append(next_id)
+            words_in.append(next_word)
+
+            # If model generated a word that ends sentence, stop
+            if len(words_in) > 6:
+                break
+
+    return " ".join(words_in)
+
+# ============ 6. TEST IT ============
+print("\n--- Testing Generation ---")
+print("Input: capital of india is ->", generate("capital of india is"))
+print("Input: capital of france is ->", generate("capital of france is"))
+print("Input: largest planet is ->", generate("largest planet is"))
+print("Input: water formula is ->", generate("water formula is"))
+
+# ============ 7. SEE ATTENTION ============
+# This shows how Attention works
+print("\n--- How Attention Works ---")
+print("When model sees 'capital of india is', attention gives HIGH score to 'india'")
+print("So it knows to predict 'new delhi', not 'paris'.")
+print("That is the magic of Transformer.")
